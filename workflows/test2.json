@@ -1,0 +1,166 @@
+{
+  "nodes": [
+    {
+      "id": "node_1779985421510_989",
+      "type": "text_input",
+      "x": 254,
+      "y": 176,
+      "fields": {
+        "value": "Vẽ 1 bộ áo vest"
+      },
+      "width": 250,
+      "height": 187
+    },
+    {
+      "id": "node_1779985423743_422",
+      "type": "text_input",
+      "x": 266,
+      "y": 455,
+      "fields": {
+        "value": "Vẽ 1 anh chàng vạm vỡ"
+      },
+      "width": 250,
+      "height": 187
+    },
+    {
+      "id": "node_1779985427284_981",
+      "type": "ai_prompt",
+      "x": 735,
+      "y": 102,
+      "fields": {
+        "systemInstruction": "You are a helpful coding assistant.",
+        "prompt": "Explain what code is.",
+        "outputType": "image"
+      },
+      "width": 250,
+      "height": 246
+    },
+    {
+      "id": "node_1779985432907_244",
+      "type": "ai_prompt",
+      "x": 738,
+      "y": 487,
+      "fields": {
+        "systemInstruction": "You are a helpful coding assistant.",
+        "prompt": "Explain what code is.",
+        "outputType": "image"
+      },
+      "width": 250,
+      "height": 246
+    },
+    {
+      "id": "node_1779985446047_702",
+      "type": "preview_image",
+      "x": 1130,
+      "y": 146,
+      "fields": {},
+      "width": 250,
+      "height": 235
+    },
+    {
+      "id": "node_1779985446248_733",
+      "type": "preview_image",
+      "x": 1107,
+      "y": 491,
+      "fields": {},
+      "width": 250,
+      "height": 235
+    },
+    {
+      "id": "node_1779985455656_683",
+      "type": "combine",
+      "x": 1774,
+      "y": 261,
+      "fields": {},
+      "width": 250,
+      "height": 195,
+      "customInputs": [
+        {
+          "name": "text_1779985461985_167",
+          "label": "Text Input 1",
+          "type": "text"
+        },
+        {
+          "name": "image_1779985464954_945",
+          "label": "Image Input 1",
+          "type": "image"
+        },
+        {
+          "name": "image_1779985465306_925",
+          "label": "Image Input 2",
+          "type": "image"
+        }
+      ]
+    },
+    {
+      "id": "node_1779985473833_55",
+      "type": "text_input",
+      "x": 1449,
+      "y": 67,
+      "fields": {
+        "value": "kết hợp 2 ảnh này lại với nhau"
+      },
+      "width": 250,
+      "height": 187
+    },
+    {
+      "id": "node_1779985479662_965",
+      "type": "preview_image",
+      "x": 2226,
+      "y": 234,
+      "fields": {},
+      "width": 250,
+      "height": 235
+    }
+  ],
+  "connections": [
+    {
+      "fromNode": "node_1779985421510_989",
+      "fromPort": "output",
+      "toNode": "node_1779985427284_981",
+      "toPort": "prompt"
+    },
+    {
+      "fromNode": "node_1779985427284_981",
+      "fromPort": "response",
+      "toNode": "node_1779985446047_702",
+      "toPort": "image"
+    },
+    {
+      "fromNode": "node_1779985432907_244",
+      "fromPort": "response",
+      "toNode": "node_1779985446248_733",
+      "toPort": "image"
+    },
+    {
+      "fromNode": "node_1779985446047_702",
+      "fromPort": "output",
+      "toNode": "node_1779985455656_683",
+      "toPort": "image_1779985464954_945"
+    },
+    {
+      "fromNode": "node_1779985446248_733",
+      "fromPort": "output",
+      "toNode": "node_1779985455656_683",
+      "toPort": "image_1779985465306_925"
+    },
+    {
+      "fromNode": "node_1779985473833_55",
+      "fromPort": "output",
+      "toNode": "node_1779985455656_683",
+      "toPort": "text_1779985461985_167"
+    },
+    {
+      "fromNode": "node_1779985455656_683",
+      "fromPort": "image",
+      "toNode": "node_1779985479662_965",
+      "toPort": "image"
+    },
+    {
+      "fromNode": "node_1779985423743_422",
+      "fromPort": "output",
+      "toNode": "node_1779985432907_244",
+      "toPort": "prompt"
+    }
+  ]
+}

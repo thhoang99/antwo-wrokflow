@@ -1,0 +1,44 @@
+{
+  "nodes": [
+    {
+      "id": "node_1779964105823_738",
+      "type": "text_input",
+      "x": 403,
+      "y": 321,
+      "fields": {
+        "value": "Canh 5 là mấy giờ"
+      }
+    },
+    {
+      "id": "node_1779964107399_714",
+      "type": "ai_prompt",
+      "x": 779,
+      "y": 313,
+      "fields": {
+        "systemInstruction": "You are a helpful coding assistant.",
+        "prompt": "Explain what code is."
+      }
+    },
+    {
+      "id": "node_1779964125706_672",
+      "type": "preview_text",
+      "x": 1125,
+      "y": 279,
+      "fields": {}
+    }
+  ],
+  "connections": [
+    {
+      "fromNode": "node_1779964105823_738",
+      "fromPort": "output",
+      "toNode": "node_1779964107399_714",
+      "toPort": "prompt"
+    },
+    {
+      "fromNode": "node_1779964107399_714",
+      "fromPort": "response",
+      "toNode": "node_1779964125706_672",
+      "toPort": "text"
+    }
+  ]
+}

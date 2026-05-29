@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>antwo workflow - Visual Node Workflow Editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+  <!-- Header Bar -->
+  <header class="header-bar">
+    <div class="logo-area">
+      <div class="logo-icon"></div>
+      <span class="logo-text">Antwo<span class="logo-highlight"> workflow</span></span>
+    </div>
+
+    <div class="controls-area">
+      <button id="btn-run" class="control-btn success-btn">
+        <svg class="btn-icon" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M8 5v14l11-7z" />
+        </svg>
+        Run Workflow
+      </button>
+      <div class="divider"></div>
+      <button id="btn-save" class="control-btn">Save</button>
+      <div class="load-dropdown-container">
+        <button id="btn-load-trigger" class="control-btn">Load ▾</button>
+        <div id="load-dropdown-menu" class="dropdown-menu">
+          <!-- Populated by JS -->
+          <div class="dropdown-item empty-state">No saved workflows</div>
+        </div>
+      </div>
+      <button id="btn-clear" class="control-btn danger-btn">Clear Canvas</button>
+      <div class="divider"></div>
+      <button id="btn-settings" class="control-btn" title="Antigravity CLI Settings">
+        <svg class="btn-icon" viewBox="0 0 24 24">
+          <path fill="currentColor"
+            d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z" />
+        </svg>
+        Settings
+      </button>
+    </div>
+
+    <div class="status-area">
+      <span class="status-label">Backend API:</span>
+      <div id="backend-status" class="status-led offline"></div>
+      <span id="backend-status-text">Disconnected</span>
+    </div>
+  </header>
+
+  <!-- Main Workspace -->
+  <main class="workspace-container">
+    <!-- Left Sidebar: Toolbox -->
+    <aside class="toolbox-sidebar">
+      <div class="sidebar-header">
+        <h3>Node Library</h3>
+      </div>
+      <div class="search-box">
+        <input type="text" id="node-search" placeholder="Search nodes...">
+      </div>
+      <div class="node-categories">
+        <div class="category-section">
+          <div class="category-title">Input & Logic</div>
+          <button class="add-node-btn" data-type="text_input">
+            <span class="node-badge input-badge">IN</span>
+            Constant Text
+          </button>
+          <button class="add-node-btn" data-type="concat">
+            <span class="node-badge logic-badge">LOGIC</span>
+            Concatenate Text
+          </button>
+          <button class="add-node-btn" data-type="combine">
+            <span class="node-badge logic-badge">LOGIC</span>
+            Combine Inputs
+          </button>
+        </div>
+
+        <div class="category-section">
+          <div class="category-title">Workspace Files</div>
+          <button class="add-node-btn" data-type="file_reader">
+            <span class="node-badge file-badge">FILE</span>
+            Read File
+          </button>
+          <button class="add-node-btn" data-type="file_writer">
+            <span class="node-badge file-badge">FILE</span>
+            Write File
+          </button>
+        </div>
+
+        <div class="category-section">
+          <div class="category-title">System & Execution</div>
+          <button class="add-node-btn" data-type="command_exec">
+            <span class="node-badge sys-badge">SYS</span>
+            Command Executor
+          </button>
+        </div>
+
+        <div class="category-section">
+          <div class="category-title">Artificial Intelligence</div>
+          <button class="add-node-btn" data-type="ai_prompt">
+            <span class="node-badge ai-badge">AI</span>
+            Prompt Gemini
+          </button>
+        </div>
+
+        <div class="category-section">
+          <div class="category-title">Previews & Outputs</div>
+          <button class="add-node-btn" data-type="preview_text">
+            <span class="node-badge input-badge">OUT</span>
+            Preview Result
+          </button>
+          <button class="add-node-btn" data-type="preview_image">
+            <span class="node-badge input-badge">OUT</span>
+            Preview Image
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Infinite Canvas Area -->
+    <div id="canvas-container" class="canvas-container">
+      <div id="canvas-grid" class="canvas-grid">
+        <!-- SVG Connections Layer -->
+        <svg id="connections-svg" class="connections-svg">
+          <defs>
+            <linearGradient id="wire-gradient-running" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#4f46e5" />
+              <stop offset="50%" stop-color="#8b5cf6" />
+              <stop offset="100%" stop-color="#10b981" />
+            </linearGradient>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255,255,255,0.25)" />
+            </marker>
+            <marker id="arrow-active" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#10b981" />
+            </marker>
+          </defs>
+        </svg>
+
+        <!-- Nodes Layer -->
+        <div id="nodes-layer" class="nodes-layer"></div>
+      </div>
+      <div class="canvas-controls">
+        <button id="canvas-zoom-in" title="Zoom In">+</button>
+        <button id="canvas-zoom-out" title="Zoom Out">−</button>
+        <button id="canvas-reset" title="Reset view">⌂</button>
+      </div>
+    </div>
+
+    <!-- Right Sidebar: Live Logs & Details -->
+    <aside class="details-sidebar">
+      <div class="sidebar-header">
+        <h3>Execution Logs</h3>
+        <button id="btn-clear-logs" class="text-btn">Clear</button>
+      </div>
+      <div id="logs-panel" class="logs-panel">
+        <div class="log-entry system-log">Welcome to antwo workflow. Connect ports and click "Run Workflow".</div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Modal Dialog for Saving Workflows -->
+  <div id="save-modal" class="modal-overlay">
+    <div class="modal-card">
+      <h3>Save Workflow</h3>
+      <p>Enter a name to save your workspace node configuration:</p>
+      <input type="text" id="workflow-name-input" placeholder="my_awesome_workflow">
+      <div class="modal-actions">
+        <button id="btn-save-cancel" class="control-btn">Cancel</button>
+        <button id="btn-save-confirm" class="control-btn success-btn">Save Workflow</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Dialog for Settings -->
+  <div id="settings-modal" class="modal-overlay">
+    <div class="modal-card">
+      <h3>Antigravity CLI Settings</h3>
+      <p>Configure the absolute local path to your <code>agy.exe</code> binary:</p>
+      <input type="text" id="settings-cli-path" placeholder="C:\Users\X_Zer\AppData\Local\agy\bin\agy.exe">
+      <div class="modal-actions">
+        <button id="btn-settings-cancel" class="control-btn">Cancel</button>
+        <button id="btn-settings-save" class="control-btn success-btn">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
