@@ -8,14 +8,14 @@ export class EdgeManager {
     this.svg = document.getElementById(svgId);
     this.container = document.getElementById(canvasContainerId);
     this.graphCanvas = graphCanvas;
-    
+
     this.connections = []; // Array of { id, fromNode, fromPort, toNode, toPort, pathEl }
-    
+
     // Connection draft state
     this.draftPath = null;
     this.activeDragPort = null; // { nodeId, portName, direction, dotEl }
     this.onConnectionChange = null; // Callback for UI connectivity toggles
-    
+
     this.initEvents();
   }
 
@@ -24,9 +24,14 @@ export class EdgeManager {
    */
   initEvents() {
     this.container.addEventListener('mousedown', (e) => {
-      const portDot = e.target.closest('.port-dot');
+      // Avoid starting wire drag when clicking the port removal button
+      if (e.target.closest('.port-remove-btn')) return;
+
+      // Allow dragging from either the port dot or the parent port item (label area)
+      const portDot = e.target.closest('.port-dot') || (e.target.closest('.port-item') ? e.target.closest('.port-item').querySelector('.port-dot') : null);
       if (!portDot) return;
-      
+      if (portDot.classList.contains('port-disabled')) return;
+
       e.stopPropagation();
       e.preventDefault();
 
@@ -52,13 +57,13 @@ export class EdgeManager {
       // Drag mouse listeners
       const onMouseMove = (moveEvent) => {
         if (!this.activeDragPort) return;
-        
+
         // Get start position in canvas coordinates
         const startPos = this.getPortCoords(this.activeDragPort);
-        
+
         // Get current mouse position in canvas coordinates
         const mousePos = this.graphCanvas.screenToCanvas(moveEvent.clientX, moveEvent.clientY);
-        
+
         // Calculate Bezier curve
         const pathData = this.calculateBezier(
           startPos.x, startPos.y,
@@ -72,14 +77,18 @@ export class EdgeManager {
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
 
-        // Find if released over a target port
-        let targetDot = upEvent.target.closest('.port-dot');
-        
-        // Generous proximity detection fallback (25px radius tolerance)
+        // Find if released over a target port using both event target and coordinate-based lookup
+        const elemUnderMouse = document.elementFromPoint(upEvent.clientX, upEvent.clientY) || upEvent.target;
+        let targetDot = null;
+        if (elemUnderMouse) {
+          targetDot = elemUnderMouse.closest('.port-dot') || (elemUnderMouse.closest('.port-item') ? elemUnderMouse.closest('.port-item').querySelector('.port-dot') : null);
+        }
+
+        // Generous proximity detection fallback (50px radius tolerance)
         if (!targetDot && this.activeDragPort) {
           const dots = document.querySelectorAll('.port-dot');
           let closestDot = null;
-          let minDistance = 25; // radius in screen pixels
+          let minDistance = 50; // radius in screen pixels
           
           for (const dot of dots) {
             const rect = dot.getBoundingClientRect();
@@ -95,24 +104,24 @@ export class EdgeManager {
             targetDot = closestDot;
           }
         }
-        
+
         if (targetDot && this.activeDragPort) {
           const targetDataset = targetDot.dataset;
           const targetDir = targetDataset.direction;
-          
+
           // Verify connection is valid (In to Out or Out to In, different nodes)
           if (targetDir !== this.activeDragPort.direction && targetDataset.node !== this.activeDragPort.nodeId) {
             const activeType = this.activeDragPort.dotEl.dataset.porttype || 'text';
             const targetType = targetDot.dataset.porttype || 'text';
 
-            if (activeType !== targetType) {
+            if (activeType !== 'any' && targetType !== 'any' && activeType !== targetType) {
               const event = new CustomEvent('connection-failed', {
                 detail: { reason: `Cannot connect ${activeType.toUpperCase()} output to ${targetType.toUpperCase()} input` }
               });
               window.dispatchEvent(event);
             } else {
               let fromNode, fromPort, toNode, toPort;
-              
+
               if (this.activeDragPort.direction === 'out') {
                 fromNode = this.activeDragPort.nodeId;
                 fromPort = this.activeDragPort.portName;
@@ -155,11 +164,11 @@ export class EdgeManager {
     // Control point horizontal offset (makes a nice aesthetic curve)
     const dist = Math.abs(x2 - x1);
     const cpOffset = Math.max(50, dist * 0.45);
-    
+
     // If output is dragging, curve outwards to the right first
     const cp1x = startDirection === 'out' ? x1 + cpOffset : x1 - cpOffset;
     const cp1y = y1;
-    
+
     // If input is receiving, curve inwards from the left
     const cp2x = startDirection === 'out' ? x2 - cpOffset : x2 + cpOffset;
     const cp2y = y2;
@@ -195,9 +204,9 @@ export class EdgeManager {
     for (const dot of allDots) {
       if (highlight) {
         // Highlight opposite ports with MATCHING datatypes
-        if (dot.dataset.direction !== currentDir && 
-            dot.dataset.node !== this.activeDragPort.nodeId &&
-            (dot.dataset.porttype || 'text') === activeType) {
+        if (dot.dataset.direction !== currentDir &&
+          dot.dataset.node !== this.activeDragPort.nodeId &&
+          (activeType === 'any' || (dot.dataset.porttype || 'text') === 'any' || (dot.dataset.porttype || 'text') === activeType)) {
           dot.classList.add('port-active-connect');
         }
       } else {
@@ -219,7 +228,7 @@ export class EdgeManager {
 
     const connId = `conn_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    
+
     pathEl.setAttribute('class', 'wire');
     pathEl.dataset.id = connId;
 
@@ -233,11 +242,25 @@ export class EdgeManager {
 
     this.svg.appendChild(pathEl);
 
-    // Create wire delete midpoint handle
-    const handleEl = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    // Create wire delete midpoint handle group for a larger hover and click target area
+    const handleEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     handleEl.setAttribute('class', 'wire-delete-handle');
-    handleEl.setAttribute('r', '6');
     handleEl.dataset.id = connId;
+
+    // Invisible larger hit area circle (radius 32 for a 64px diameter easy-click target)
+    const hitArea = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    hitArea.setAttribute('r', '64');
+    hitArea.setAttribute('fill', 'transparent');
+    hitArea.setAttribute('style', 'cursor: pointer;');
+    handleEl.appendChild(hitArea);
+
+    // Visible small circle
+    const visibleCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    visibleCircle.setAttribute('class', 'wire-delete-visible');
+    visibleCircle.setAttribute('r', '6');
+    visibleCircle.setAttribute('cx', '0');
+    visibleCircle.setAttribute('cy', '0');
+    handleEl.appendChild(visibleCircle);
 
     handleEl.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -306,7 +329,7 @@ export class EdgeManager {
    * Re-verify if port has any active connections left
    */
   checkAndUpdatePortState(nodeId, portName, direction) {
-    const hasConns = this.connections.some(c => 
+    const hasConns = this.connections.some(c =>
       (direction === 'out' && c.fromNode === nodeId && c.fromPort === portName) ||
       (direction === 'in' && c.toNode === nodeId && c.toPort === portName)
     );
@@ -340,8 +363,12 @@ export class EdgeManager {
     const midY = 0.125 * y1 + 0.375 * cp1y + 0.375 * cp2y + 0.125 * y2;
 
     if (conn.handleEl) {
-      conn.handleEl.setAttribute('cx', midX);
-      conn.handleEl.setAttribute('cy', midY);
+      if (conn.handleEl.tagName.toLowerCase() === 'g') {
+        conn.handleEl.setAttribute('transform', `translate(${midX}, ${midY})`);
+      } else {
+        conn.handleEl.setAttribute('cx', midX);
+        conn.handleEl.setAttribute('cy', midY);
+      }
     }
   }
 
@@ -358,14 +385,21 @@ export class EdgeManager {
   /**
    * Set wire visual style to "running" state
    */
-  setWireRunning(nodeId, isRunning) {
+  setWireRunning(nodeId, isRunning, isError = false) {
     for (const c of this.connections) {
       if (c.fromNode === nodeId) {
         if (isRunning) {
           c.pathEl.classList.add('running-wire');
+          c.pathEl.classList.remove('active-wire', 'error-wire');
         } else {
           c.pathEl.classList.remove('running-wire');
-          c.pathEl.classList.add('active-wire');
+          if (isError) {
+            c.pathEl.classList.add('error-wire');
+            c.pathEl.classList.remove('active-wire');
+          } else {
+            c.pathEl.classList.add('active-wire');
+            c.pathEl.classList.remove('error-wire');
+          }
         }
       }
     }
@@ -376,7 +410,7 @@ export class EdgeManager {
    */
   resetAllWireAnimations() {
     for (const c of this.connections) {
-      c.pathEl.classList.remove('running-wire', 'active-wire');
+      c.pathEl.classList.remove('running-wire', 'active-wire', 'error-wire');
     }
   }
 

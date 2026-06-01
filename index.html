@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>antwo workflow - Visual Node Workflow Editor</title>
+  <title>Antwo Workflow - Visual Node Workflow Editor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -18,7 +18,8 @@
   <header class="header-bar">
     <div class="logo-area">
       <div class="logo-icon"></div>
-      <span class="logo-text">Antwo<span class="logo-highlight"> workflow</span></span>
+      <span class="logo-text"><span class="logo-part-ant">Ant</span><span class="logo-part-wo">wo</span><span
+          class="logo-part-rkflow">rkflow</span></span>
     </div>
 
     <div class="controls-area">
@@ -79,6 +80,10 @@
           <button class="add-node-btn" data-type="combine">
             <span class="node-badge logic-badge">LOGIC</span>
             Combine Inputs
+          </button>
+          <button class="add-node-btn" data-type="loop">
+            <span class="node-badge logic-badge">LOOP</span>
+            Loop Action
           </button>
         </div>
 
@@ -163,7 +168,7 @@
         <button id="btn-clear-logs" class="text-btn">Clear</button>
       </div>
       <div id="logs-panel" class="logs-panel">
-        <div class="log-entry system-log">Welcome to antwo workflow. Connect ports and click "Run Workflow".</div>
+        <div class="log-entry system-log">Welcome to Antwo workflow. Connect ports and click "Run Workflow".</div>
       </div>
     </aside>
   </main>
@@ -183,13 +188,71 @@
 
   <!-- Modal Dialog for Settings -->
   <div id="settings-modal" class="modal-overlay">
-    <div class="modal-card">
-      <h3>Antigravity CLI Settings</h3>
-      <p>Configure the absolute local path to your <code>agy.exe</code> binary:</p>
-      <input type="text" id="settings-cli-path" placeholder="C:\Users\X_Zer\AppData\Local\agy\bin\agy.exe">
-      <div class="modal-actions">
-        <button id="btn-settings-cancel" class="control-btn">Cancel</button>
-        <button id="btn-settings-save" class="control-btn success-btn">Save Settings</button>
+    <div class="modal-card settings-card">
+      <h3>Settings</h3>
+
+      <!-- Tab Bar -->
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="general">General</button>
+        <button class="settings-tab" data-tab="ai">AI</button>
+      </div>
+
+      <!-- General Tab -->
+      <div class="settings-tab-content active" id="tab-general">
+        <div class="settings-section">
+          <label class="settings-label">Antigravity CLI Path</label>
+          <p class="settings-desc">Absolute path to <code>agy.exe</code> binary. Leave empty to use default
+            <code>agy</code>.</p>
+          <input type="text" id="settings-cli-path" placeholder="e.g. C:\Users\...\agy.exe">
+        </div>
+
+        <div class="settings-section">
+          <label class="settings-label">Cache Directory</label>
+          <p class="settings-desc">Directory to store execution cache files. Leave empty to use workspace folder.</p>
+          <input type="text" id="settings-cache-dir" placeholder="e.g. C:\temp">
+        </div>
+
+        <div class="settings-section settings-cache-clear-group">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+            <span class="settings-desc" style="margin: 0;">Clear temporary cache files in configured folder</span>
+            <button id="btn-settings-clear-cache" class="control-btn settings-danger-btn">Clear Cache</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Tab -->
+      <div class="settings-tab-content" id="tab-ai">
+        <!-- Gemini Section -->
+        <div class="settings-ai-provider">
+          <div class="settings-ai-provider-header">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="var(--accent-cyan)"
+                stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>Gemini</span>
+          </div>
+
+          <div class="settings-section">
+            <label class="settings-label">Default Image Size</label>
+            <p class="settings-desc">Maximum 2048 × 2048 pixels</p>
+            <div style="display: flex; gap: 12px;">
+              <div style="flex: 1;">
+                <label class="settings-mini-label">Width (px)</label>
+                <input type="number" id="settings-img-width" min="1" max="2048" value="512">
+              </div>
+              <div style="flex: 1;">
+                <label class="settings-mini-label">Height (px)</label>
+                <input type="number" id="settings-img-height" min="1" max="2048" value="512">
+              </div>
+            </div>
+          </div>
+
+
+        </div>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 12px;">
+        <button id="btn-settings-save" class="control-btn success-btn" style="width: 100%;">Close Settings</button>
       </div>
     </div>
   </div>

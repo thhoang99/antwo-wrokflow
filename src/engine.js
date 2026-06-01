@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import https from 'https';
 
-import { existsSync, unlinkSync, readFileSync, statSync } from 'fs';
+import { existsSync, unlinkSync, readFileSync, statSync, mkdirSync } from 'fs';
 
 /**
  * Helper to execute terminal commands as a promise
@@ -23,42 +23,29 @@ function execPromise(command, cwd) {
 /**
  * ExecFile runner to invoke the Antigravity CLI (agy.exe) safely without shell injection risks
  */
-function runAgyCLI(cliPath, prompt, option = 'text') {
+/**
+ * Shared polling mechanism: waits for a file to appear and contain data.
+ * Extracted from runAgyCLI and runCombineCLI to avoid duplication.
+ *
+ * @param {Object} options
+ * @param {string}   options.logFile      - Path to the file being polled
+ * @param {boolean}  [options.isImage]    - If true, checks file size instead of text content
+ * @param {number}   [options.intervalTime=2000]  - Polling interval in ms
+ * @param {number}   [options.maxTimeout=300000]  - Max wait time in ms (default 5 min)
+ * @param {Function} [options.onContent]  - Optional transform: receives (content: string) and returns
+ *                                          a value to resolve with. Return `undefined` to fall through
+ *                                          to the default text resolve behaviour.
+ * @returns {Promise<*>}
+ */
+function pollForResult({ logFile, isImage = false, intervalTime = 2000, maxTimeout = 300000, onContent }) {
   return new Promise((resolve, reject) => {
-    const isImage = option === 'image';
-    // Escape double quotes inside prompt to ensure Windows CMD/PowerShell handles it correctly
-    let escapedPrompt = prompt.replace(/"/g, '\\"');
-    if (isImage) {
-      escapedPrompt = "generate_image: " + escapedPrompt;
-    }
-
-    const randomSuffix = `${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-    const cacheFile = `D:\\cache_${randomSuffix}.txt`;
-    const randomName = 'img_' + Math.random().toString(36).substring(2, 15) + '_' + Date.now() + '.png';
-    const imagePath = 'D:\\' + randomName;
-    const logFile = isImage ? imagePath : cacheFile;
-
-    // Tự động xóa cache.txt ngẫu nhiên trước khi chạy
-    try {
-      if (existsSync(cacheFile)) {
-        unlinkSync(cacheFile);
-      }
-    } catch (e) { }
-    clearFileDelayed(cacheFile);
-
-    const command = `"${cliPath}" -p "${escapedPrompt} and write all result to ${logFile}"`;
-    // 3. Kích hoạt CLI chạy ngầm hoàn toàn
-    exec(command, { timeout: 500, shell: "cmd" });
-
     let elapsed = 0;
-    const intervalTime = 2000; // Kiểm tra định kỳ mỗi 2 giây
-    const maxTimeout = 300000;  // Giới hạn 5 phút (300 giây)
 
-    // 4. Vòng lặp đọc file định kỳ (Polling)
     const checker = setInterval(() => {
       elapsed += intervalTime;
 
       if (existsSync(logFile)) {
+        exec("npm run clean");
         try {
           if (isImage) {
             const stats = statSync(logFile);
@@ -68,10 +55,14 @@ function runAgyCLI(cliPath, prompt, option = 'text') {
             }
           } else {
             const content = readFileSync(logFile, 'utf8').trim();
-            // ĐIỀU KIỆN 2: Tiến trình chưa thoát nhưng file đã có nội dung hoàn chỉnh
             if (content.length > 0) {
               clearInterval(checker);
               clearFileDelayed(logFile);
+              // Allow caller to transform the content (e.g. extract image paths)
+              if (onContent) {
+                const transformed = onContent(content);
+                if (transformed !== undefined) return resolve(transformed);
+              }
               return resolve(content);
             }
           }
@@ -80,7 +71,7 @@ function runAgyCLI(cliPath, prompt, option = 'text') {
         }
       }
 
-      // 5. Xử lý khi hết hạn
+      // Xử lý khi hết hạn
       if (elapsed >= maxTimeout) {
         clearInterval(checker);
 
@@ -88,31 +79,30 @@ function runAgyCLI(cliPath, prompt, option = 'text') {
           if (existsSync(logFile)) {
             try {
               const stats = statSync(logFile);
-              if (stats.size > 0) {
-                return resolve(logFile);
-              }
+              if (stats.size > 0) return resolve(logFile);
             } catch (e) { }
           }
-          return reject(new Error('CLI failed: Quá thời gian nhưng không có ảnh được tạo.'));
+          return reject(new Error('CLI failed'));
+        }
+
+        // Text mode timeout
+        let finalContent = '';
+        if (existsSync(logFile)) {
+          try { finalContent = readFileSync(logFile, 'utf8').trim(); } catch (e) { }
+        }
+        clearFileDelayed(logFile);
+
+        if (finalContent.length > 0) {
+          if (onContent) {
+            const transformed = onContent(finalContent);
+            if (transformed !== undefined) return resolve(transformed);
+          }
+          return resolve(finalContent + "\n[Cảnh báo: Kết quả bị cắt ngang do quá thời gian]");
         } else {
-          // Đọc nốt những gì AI đã kịp ghi vào file trước khi bị ép dừng
-          let finalContent = '';
-          if (existsSync(logFile)) {
-            try { finalContent = readFileSync(logFile, 'utf8').trim(); } catch (e) { }
-          }
-
-          clearFileDelayed(logFile);
-
-          if (finalContent.length > 0) {
-            return resolve(finalContent + "\n[Cảnh báo: Kết quả bị cắt ngang do quá thời gian]");
-          } else {
-            return reject(new Error('CLI failed: Quá thời gian nhưng không có dữ liệu trả về.'));
-          }
+          return reject(new Error('CLI failed: Quá thời gian nhưng không có dữ liệu trả về.'));
         }
       }
     }, intervalTime);
-
-
   });
 }
 
@@ -125,117 +115,97 @@ function clearFileDelayed(filePath) {
 }
 
 /**
- * ExecFile runner to invoke the Antigravity CLI (agy.exe) for the Combine node specifically, with separate random logs
+ * Invoke the Antigravity CLI (agy.exe) and poll for results.
  */
-function runCombineCLI(cliPath, prompt) {
-  return new Promise((resolve, reject) => {
-    let escapedPrompt = prompt.replace(/"/g, '\\"');
-    const randomSuffix = `${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-    const cacheFile = `D:\\combine_cache_${randomSuffix}.txt`;
+function runAgyCLI(cliPath, prompt, option = 'text', cacheDir = '', imageWidth = 720, imageHeight = 720) {
+  const isImage = option === 'image';
+  // Escape double quotes inside prompt to ensure Windows CMD/PowerShell handles it correctly
+  let escapedPrompt = prompt.replace(/"/g, '\\"');
+  if (isImage) {
+    escapedPrompt = `generate_image: ${escapedPrompt}.The final image must be exactly ${imageWidth}x${imageHeight} pixels.`;
+    console.log(escapedPrompt);
+  }
 
-    try {
-      if (existsSync(cacheFile)) {
-        unlinkSync(cacheFile);
-      }
-    } catch (e) { }
-    clearFileDelayed(cacheFile);
+  const randomSuffix = `${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+  const resolvedCacheDir = path.resolve(process.cwd(), cacheDir || './antwoworkflowcache');
 
-    const command = `"${cliPath}" -p "${escapedPrompt} and write all result to ${cacheFile}"`;
-    exec(command, { timeout: 500, shell: "cmd" });
+  // Ensure cache directory exists
+  try {
+    if (!existsSync(resolvedCacheDir)) {
+      mkdirSync(resolvedCacheDir, { recursive: true });
+    }
+  } catch (e) { }
 
-    let elapsed = 0;
-    const intervalTime = 2000;
-    const maxTimeout = 300000; // 5 minutes
+  const cacheFile = path.join(resolvedCacheDir, `cache_${randomSuffix}.txt`);
+  const randomName = 'img_' + Math.random().toString(36).substring(2, 15) + '_' + Date.now() + '.png';
+  const imagePath = path.join(resolvedCacheDir, randomName);
+  const logFile = isImage ? imagePath : cacheFile;
 
-    const checker = setInterval(() => {
-      elapsed += intervalTime;
+  // Tự động xóa cache file ngẫu nhiên trước khi chạy
+  clearFileDelayed(cacheFile);
 
-      if (existsSync(cacheFile)) {
-        try {
-          const content = readFileSync(cacheFile, 'utf8').trim();
-          if (content.length > 0) {
-            clearInterval(checker);
-            clearFileDelayed(cacheFile);
+  // If cliPath is not configured, call default "agy" instead of the full path
+  const executable = cliPath ? `"${cliPath}"` : `agy`;
+  const command = `${executable} --dangerously-skip-permissions -p "${escapedPrompt} and write all result to ${logFile}"`;
+  // Kích hoạt CLI chạy ngầm hoàn toàn
+  exec(command, { timeout: 500 });
 
-            const match = content.match(/((?:[a-zA-Z]:\\|[a-zA-Z]:\/|\/|\\)?(?:[^"\s\n]*?)combine_cache(?:[^"\s\n]*?)\.png)/i);
-            if (match) {
-              return resolve({ text: content, imagePath: match[1] });
-            }
-            return resolve(content);
-          }
-        } catch (readError) {
-          console.log("Waiting for combine cache file...");
-        }
-      }
-
-      if (elapsed >= maxTimeout) {
-        clearInterval(checker);
-        let finalContent = '';
-        if (existsSync(cacheFile)) {
-          try { finalContent = readFileSync(cacheFile, 'utf8').trim(); } catch (e) { }
-        }
-        clearFileDelayed(cacheFile);
-
-        if (finalContent.length > 0) {
-          const match = finalContent.match(/((?:[a-zA-Z]:\\|[a-zA-Z]:\/|\/|\\)?(?:[^"\s\n]*?)combine_cache(?:[^"\s\n]*?)\.png)/i);
-          if (match) {
-            return resolve({ text: finalContent + "\n[Cảnh báo: Kết quả bị cắt ngang do quá thời gian]", imagePath: match[1] });
-          }
-          return resolve(finalContent + "\n[Cảnh báo: Kết quả bị cắt ngang do quá thời gian]");
-        } else {
-          return reject(new Error('CLI failed: Quá thời gian nhưng không có dữ liệu trả về.'));
-        }
-      }
-    }, intervalTime);
-  });
+  return pollForResult({ logFile, isImage });
 }
 
 /**
- * Call Gemini API using native https to avoid extra dependencies
+ * Invoke the Antigravity CLI (agy.exe) for the Combine node and poll for results.
  */
-function callGeminiAPI(prompt, apiKey) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }]
-    });
+function runCombineCLI(cliPath, prompt, cacheDir = '') {
+  let escapedPrompt = prompt.replace(/"/g, '\\"');
+  const randomSuffix = `${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+  const resolvedCacheDir = path.resolve(process.cwd(), cacheDir || './antwoworkflowcache');
 
-    const options = {
-      hostname: 'generativelinput.googleapis.com', // fallback or primary endpoint
-      // Using standard GEMINI endpoint
-      hostname: 'generativelanguage.googleapis.com',
-      port: 443,
-      path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': data.length
-      }
+  // Ensure cache directory exists
+  try {
+    if (!existsSync(resolvedCacheDir)) {
+      mkdirSync(resolvedCacheDir, { recursive: true });
+    }
+  } catch (e) { }
+
+  const cacheFile = path.join(resolvedCacheDir, `combine_cache_${randomSuffix}.txt`);
+  clearFileDelayed(cacheFile);
+
+  // If cliPath is not configured, call default "agy" instead of the full path
+  const executable = cliPath ? `"${cliPath}"` : `agy`;
+  const command = `${executable} --dangerously-skip-permissions -p "${escapedPrompt} and write all result to ${cacheFile}"`;
+
+
+  console.log(command);
+  exec(command, { timeout: 500 });
+
+  // Custom content transformer: extract combine image path from text output
+  const extractCombineImage = (content) => {
+    // 1. Try to find the blended/combined image first
+    let match = content.match(/((?:[a-zA-Z]:\\|[a-zA-Z]:\/|\/|\\)?(?:[^"\s\n]*?)(?:combined|combine_cache|blended)(?:[^"\s\n]*?)\.(?:png|jpe?g|gif|webp|svg))/i);
+
+    // 2. If not found, look for ANY image URL or path in the content
+    if (!match) {
+      match = content.match(/((?:[a-zA-Z]:\\|[a-zA-Z]:\/|\/|\\|https?:\/\/)(?:[^"\s\n]*?)\.(?:png|jpe?g|gif|webp|svg))/i);
+    }
+
+    // 3. If still not found, but the content itself is a clean image path/URL
+    if (!match && /\.(?:png|jpe?g|gif|webp|svg)$/i.test(content.trim())) {
+      return {
+        text: content,
+        imagePath: content.trim()
+      };
+    }
+
+    return {
+      text: content,
+      imagePath: match ? match[1] : null
     };
+  };
 
-    const req = https.request(options, (res) => {
-      let body = '';
-      res.on('data', (chunk) => body += chunk);
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(body);
-          if (json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts[0]) {
-            resolve(json.candidates[0].content.parts[0].text);
-          } else if (json.error) {
-            reject(new Error(json.error.message || 'Gemini API Error'));
-          } else {
-            reject(new Error('Unexpected response format from Gemini API'));
-          }
-        } catch (e) {
-          reject(new Error(`Failed to parse Gemini response: ${body}`));
-        }
-      });
-    });
-
-    req.on('error', (e) => reject(e));
-    req.write(data);
-    req.end();
-  });
+  return pollForResult({ logFile: cacheFile, onContent: extractCombineImage });
 }
+
 
 /**
  * Asynchronous Node Execution Engine
@@ -325,13 +295,52 @@ export class GraphEngine {
       }
     }
 
+    // Loop tracking states
+    const loopIterations = {};
+    const loopMaxIterations = {};
+    const loopCurrentInput = {};
+    const loopDownstream = {};
+
+    const getDownstreamNodes = (loopId) => {
+      const downstream = new Set();
+      const dfs = (currId) => {
+        const outConns = outgoingConnections[currId] || [];
+        for (const conn of outConns) {
+          if (conn.toNode === loopId) continue; // skip feedback loops
+          if (!downstream.has(conn.toNode)) {
+            downstream.add(conn.toNode);
+            dfs(conn.toNode);
+          }
+        }
+      };
+      dfs(loopId);
+      return downstream;
+    };
+
+    for (const node of nodes) {
+      if (node.type === 'loop') {
+        loopDownstream[node.id] = getDownstreamNodes(node.id);
+        loopIterations[node.id] = 0;
+        const iterationsStr = node.fields?.iterations || '3';
+        loopMaxIterations[node.id] = Math.max(1, parseInt(iterationsStr) || 3);
+        loopCurrentInput[node.id] = inputs[node.id].input || '';
+      }
+    }
+
     // Track active runs, in-degrees, and queues
     const inDegree = {};
     const executionQueue = [];
 
     for (const node of nodes) {
-      // Indegree is the number of connected inputs
-      inDegree[node.id] = incomingConnections[node.id].length;
+      // Indegree is the number of connected inputs, excluding feedback loops
+      inDegree[node.id] = incomingConnections[node.id].filter(c => {
+        if (node.type === 'loop' && c.toPort === 'input') {
+          const downstream = getDownstreamNodes(node.id);
+          if (downstream.has(c.fromNode)) return false;
+        }
+        return true;
+      }).length;
+
       if (inDegree[node.id] === 0) {
         executionQueue.push(node.id);
       }
@@ -342,60 +351,134 @@ export class GraphEngine {
     const completedNodes = new Set();
     const failedNodes = new Set();
 
-    const processNext = async () => {
-      if (executionQueue.length === 0 && runningNodes.size === 0) {
-        return;
-      }
+    return new Promise((resolve, reject) => {
+      const checkAndProcess = () => {
+        if (executionQueue.length === 0 && runningNodes.size === 0) {
+          resolve();
+          return;
+        }
 
-      while (executionQueue.length > 0) {
-        const nodeId = executionQueue.shift();
-        runningNodes.add(nodeId);
+        while (executionQueue.length > 0) {
+          const nodeId = executionQueue.shift();
+          runningNodes.add(nodeId);
 
-        // Run node asynchronously
-        this.executeNode(nodeMap.get(nodeId), inputs[nodeId], onNodeStatus, connections, nodes)
-          .then(async (nodeOutputs) => {
-            runningNodes.delete(nodeId);
-            completedNodes.add(nodeId);
-            outputs[nodeId] = nodeOutputs;
-
-            // Notify UI of completion
-            onNodeStatus(nodeId, 'completed', { outputs: nodeOutputs });
-
-            // Resolve outputs to child inputs
-            const outConns = outgoingConnections[nodeId] || [];
-            for (const conn of outConns) {
-              const childId = conn.toNode;
-              const childPort = conn.toPort;
-              const parentPort = conn.fromPort;
-
-              if (inputs[childId]) {
-                inputs[childId][childPort] = nodeOutputs[parentPort];
-              }
-
-              inDegree[childId]--;
-              if (inDegree[childId] === 0 && !completedNodes.has(childId) && !runningNodes.has(childId) && !failedNodes.has(childId)) {
-                executionQueue.push(childId);
-              }
+          const targetNode = nodeMap.get(nodeId);
+          // Make sure loop input is up to date for current iteration
+          if (targetNode && targetNode.type === 'loop') {
+            if (loopIterations[nodeId] === 0) {
+              loopCurrentInput[nodeId] = inputs[nodeId].input || loopCurrentInput[nodeId];
             }
+            loopIterations[nodeId]++;
+            inputs[nodeId].input = loopCurrentInput[nodeId];
+            console.log(`[Loop Node ${nodeId}] Iteration ${loopIterations[nodeId]}/${loopMaxIterations[nodeId]} starting with input:`, loopCurrentInput[nodeId]);
+            onNodeStatus(nodeId, 'tracing', {
+              message: `[Loop Iteration ${loopIterations[nodeId]}/${loopMaxIterations[nodeId]}] Passing input to output...`
+            });
+          }
 
-            // Continue processing
-            await processNext();
-          })
-          .catch(async (error) => {
-            runningNodes.delete(nodeId);
-            failedNodes.add(nodeId);
+          console.log(`[Engine] Executing node: ${nodeId} (${targetNode?.type})`);
 
-            // Notify UI of error
-            onNodeStatus(nodeId, 'error', { error: error.message || 'Execution failed' });
+          // Run node asynchronously
+          this.executeNode(targetNode, inputs[nodeId], onNodeStatus, connections, nodes)
+            .then((nodeOutputs) => {
+              runningNodes.delete(nodeId);
+              completedNodes.add(nodeId);
+              outputs[nodeId] = nodeOutputs;
 
-            // Do not propagate to child nodes
-            // They will remain pending/unresolved
-            await processNext();
-          });
-      }
-    };
+              console.log(`[Engine] Completed node: ${nodeId} (${targetNode?.type}). Outputs:`, nodeOutputs);
 
-    await processNext();
+              // Notify UI of completion
+              onNodeStatus(nodeId, 'completed', { outputs: nodeOutputs });
+
+              // Resolve outputs to child inputs
+              const outConns = outgoingConnections[nodeId] || [];
+              for (const conn of outConns) {
+                const childId = conn.toNode;
+                const childPort = conn.toPort;
+                const parentPort = conn.fromPort;
+
+                if (inputs[childId]) {
+                  inputs[childId][childPort] = nodeOutputs[parentPort];
+                }
+
+                inDegree[childId]--;
+                console.log(`[Engine] Resolved output to child ${childId}.${childPort}. New inDegree:`, inDegree[childId]);
+                if (inDegree[childId] === 0 && !completedNodes.has(childId) && !runningNodes.has(childId) && !failedNodes.has(childId)) {
+                  executionQueue.push(childId);
+                }
+              }
+
+              // Check if any loop has completed its current iteration!
+              let didResetLoop = false;
+              for (const loopId of Object.keys(loopDownstream)) {
+                if (loopIterations[loopId] > 0) {
+                  const ds = loopDownstream[loopId];
+                  const allCompleted = Array.from(ds).every(id => completedNodes.has(id));
+                  console.log(`[Loop Check ${loopId}] Iteration ${loopIterations[loopId]}. Downstream nodes:`, Array.from(ds), "All Completed?", allCompleted);
+                  if (allCompleted) {
+                    if (loopIterations[loopId] < loopMaxIterations[loopId]) {
+                      // We need to run another iteration!
+                      didResetLoop = true;
+
+                      // 1. Fetch feedback value if any
+                      const feedbackConn = connections.find(c => c.toNode === loopId && c.toPort === 'input');
+                      if (feedbackConn) {
+                        const parentOutput = outputs[feedbackConn.fromNode];
+                        if (parentOutput) {
+                          loopCurrentInput[loopId] = parentOutput[feedbackConn.fromPort];
+                        }
+                      }
+                      console.log(`[Loop Check ${loopId}] Resetting for next iteration. Current feedback input:`, loopCurrentInput[loopId]);
+
+                      // 2. Reset Loop Node and its downstream nodes to idle
+                      const resetIds = [loopId, ...Array.from(ds)];
+                      for (const resetId of resetIds) {
+                        completedNodes.delete(resetId);
+                        runningNodes.delete(resetId);
+                        failedNodes.delete(resetId);
+                        outputs[resetId] = {};
+                        onNodeStatus(resetId, 'idle', {});
+                      }
+
+                      // 3. Reset inDegrees for downstream
+                      for (const resetId of resetIds) {
+                        inDegree[resetId] = incomingConnections[resetId].filter(c => {
+                          if (resetId === loopId && c.toPort === 'input') return false;
+                          return true;
+                        }).length;
+                      }
+
+                      // Loop node runs next
+                      inDegree[loopId] = 0;
+                      executionQueue.push(loopId);
+
+                      setTimeout(checkAndProcess, 50);
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // Continue processing if we didn't reset a loop
+              if (!didResetLoop) {
+                checkAndProcess();
+              }
+            })
+            .catch((error) => {
+              runningNodes.delete(nodeId);
+              failedNodes.add(nodeId);
+
+              // Notify UI of error
+              onNodeStatus(nodeId, 'error', { error: error.message || 'Execution failed' });
+
+              // Continue processing
+              checkAndProcess();
+            });
+        }
+      };
+
+      checkAndProcess();
+    });
   }
 
   /**
@@ -466,8 +549,13 @@ export class GraphEngine {
         if (!fullPath.startsWith(this.cwd)) {
           throw new Error('Access denied: File must be inside the workspace');
         }
-        const content = await fs.readFile(fullPath, 'utf-8');
-        return { content };
+        const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(filePath);
+        if (isImage) {
+          return { content: filePath };
+        } else {
+          const content = await fs.readFile(fullPath, 'utf-8');
+          return { content };
+        }
       }
 
       case 'file_writer': {
@@ -504,12 +592,15 @@ export class GraphEngine {
       }
 
       case 'ai_prompt': {
-        const prompt = nodeInputs.prompt;
+        let prompt = nodeInputs.prompt;
         if (!prompt) {
           throw new Error('Prompt is required');
         }
 
-        const outputType = nodeInputs.outputType || 'text';
+        // const systemInstruction = nodeInputs.systemInstruction;
+        // if (systemInstruction) {
+        //   prompt = `System Instruction: ${systemInstruction}\n\nPrompt: ${prompt}`;
+        // }
 
         // Read settings.json configuration
         let settings = {};
@@ -521,11 +612,16 @@ export class GraphEngine {
           // ignore if settings not found
         }
 
-        const cliPath = settings.cliPath || 'C:\\Users\\X_Zer\\AppData\\Local\\agy\\bin\\agy.exe';
+        const outputType = nodeInputs.outputType || 'text';
+        // Resolve image dimensions: node custom > settings default > 720
+        const w = nodeInputs.imageWidth || settings.defaultImageWidth || 720;
+        const h = nodeInputs.imageHeight || settings.defaultImageHeight || 720;
+
+        const cliPath = settings.cliPath || '';
 
         // Try executing local Antigravity CLI directly
         try {
-          const result = await runAgyCLI(cliPath, prompt, outputType);
+          const result = await runAgyCLI(cliPath, prompt, outputType, settings.cacheDir, w, h);
           return { response: result };
         } catch (cliError) {
           if (outputType === 'image') {
@@ -558,6 +654,18 @@ export class GraphEngine {
           throw new Error('Combine node requires at least 2 inputs');
         }
 
+        // Read settings for default image dimensions
+        let combineSettings = {};
+        try {
+          const settingsPath = path.join(this.cwd, 'settings.json');
+          const content = await fs.readFile(settingsPath, 'utf-8');
+          combineSettings = JSON.parse(content);
+        } catch (e) { }
+
+        // Resolve image dimensions: node custom > settings default > 720
+        const w = nodeInputs.imageWidth || combineSettings.defaultImageWidth || 720;
+        const h = nodeInputs.imageHeight || combineSettings.defaultImageHeight || 720;
+
         // Combine text prompt parts with "and"
         const textCombined = textInputs.join(' and ');
 
@@ -565,10 +673,11 @@ export class GraphEngine {
         const imageCombined = imageInputs.map(img => `Refer the image of this link: ${img}`).join(' and ');
 
         let finalPrompt = '';
+        const promptCombineImgs = `Combine these images use AI: ${imageCombined}, all to one picture. The image output must be exactly ${w}x${h} pixels.`
         if (textInputs.length === 0) {
-          finalPrompt = `Combine these images: ${imageCombined}`;
+          finalPrompt = promptCombineImgs;
         } else if (textCombined && imageCombined) {
-          finalPrompt = `${textCombined} and ${imageCombined}`;
+          finalPrompt = `${textCombined} , ${imageCombined} `;
         } else {
           finalPrompt = textCombined || imageCombined || '';
         }
@@ -578,17 +687,10 @@ export class GraphEngine {
         }
 
         // Execute agy.exe
-        let settings = {};
-        try {
-          const settingsPath = path.join(this.cwd, 'settings.json');
-          const content = await fs.readFile(settingsPath, 'utf-8');
-          settings = JSON.parse(content);
-        } catch (e) { }
-
-        const cliPath = settings.cliPath || 'C:\\Users\\X_Zer\\AppData\\Local\\agy\\bin\\agy.exe';
+        const cliPath = combineSettings.cliPath || '';
 
         try {
-          const result = await runCombineCLI(cliPath, finalPrompt);
+          const result = await runCombineCLI(cliPath, finalPrompt, combineSettings.cacheDir);
           let resultText = typeof result === 'object' ? result.text : result;
           let resultImageUrl = typeof result === 'object' ? result.imagePath : null;
 
@@ -623,6 +725,11 @@ export class GraphEngine {
       case 'preview_image': {
         const image = nodeInputs.image || '';
         return { src: image, output: image };
+      }
+
+      case 'loop': {
+        const input = nodeInputs.input || '';
+        return { output: input };
       }
 
       default:

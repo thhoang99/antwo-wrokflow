@@ -5,6 +5,8 @@
 /.pnp
 .pnp.js
 /.antigravitycli
+/workflows
+/antwoworkflowcache
 
 # testing
 /coverage
@@ -24,3 +26,4 @@ yarn-debug.log*
 yarn-error.log*
 annafunc/firebase-debug.log*
 mock.txt
+./antwoworkflowcache

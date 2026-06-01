@@ -27,8 +27,11 @@ const workflowNameInput = document.getElementById('workflow-name-input');
 
 const settingsModal = document.getElementById('settings-modal');
 const btnSettingsSave = document.getElementById('btn-settings-save');
-const btnSettingsCancel = document.getElementById('btn-settings-cancel');
 const settingsCliPath = document.getElementById('settings-cli-path');
+const settingsCacheDir = document.getElementById('settings-cache-dir');
+const settingsImgWidth = document.getElementById('settings-img-width');
+const settingsImgHeight = document.getElementById('settings-img-height');
+const btnSettingsClearCache = document.getElementById('btn-settings-clear-cache');
 
 // Toolbox search
 const nodeSearch = document.getElementById('node-search');
@@ -153,6 +156,44 @@ btnClearLogs.addEventListener('click', () => {
 });
 
 /**
+ * Propagate outputs from completed nodes to their downstream preview nodes on the frontend.
+ * This is particularly useful in single-node runs where downstream preview nodes do not execute on the backend.
+ */
+function propagateOutputs(nodeId, nodeOutputs) {
+  if (!nodeOutputs) return;
+
+  const outgoing = edges.connections.filter(c => c.fromNode === nodeId);
+  for (const conn of outgoing) {
+    const childNode = nodesList.find(n => n.id === conn.toNode);
+    if (!childNode) continue;
+
+    const val = nodeOutputs[conn.fromPort];
+    if (val === undefined || val === null) continue;
+
+    // Propagate value to child node's inputs
+    if (childNode.type === 'preview_text') {
+      if (conn.toPort === 'text') {
+        const childOutputs = { value: val, output: val };
+        childNode.updatePreview(childOutputs);
+        propagateOutputs(childNode.id, childOutputs);
+      }
+    } else if (childNode.type === 'preview_image') {
+      if (conn.toPort === 'image') {
+        const childOutputs = { src: val, output: val };
+        childNode.updatePreview(childOutputs);
+        propagateOutputs(childNode.id, childOutputs);
+      }
+    } else if (childNode.type === 'loop') {
+      if (conn.toPort === 'input') {
+        const childOutputs = { output: val };
+        childNode.updatePreview(childOutputs);
+        propagateOutputs(childNode.id, childOutputs);
+      }
+    }
+  }
+}
+
+/**
  * Initialize Web Socket to local server
  */
 function connectWebSocket() {
@@ -212,9 +253,8 @@ function connectWebSocket() {
             if (status === 'running') {
               log(`Node [${node.metadata.title}] is active...`, 'running');
               edges.setWireRunning(nodeId, true);
-
-              // Generalized downstream loading state for Gemini/Command nodes (recursive)
-              if (node.type === 'ai_prompt' || node.type === 'combine' || node.type === 'command_exec') {
+              // Generalized downstream loading state for Gemini/Command/Loop nodes (recursive)
+              if (node.type === 'ai_prompt' || node.type === 'combine' || node.type === 'command_exec' || node.type === 'loop') {
                 const visited = new Set();
                 const dfsDescendants = (currId) => {
                   const outConns = edges.connections.filter(c => c.fromNode === currId);
@@ -228,7 +268,8 @@ function connectWebSocket() {
                           const el = document.getElementById(`preview-text-${dsNode.id}`);
                           if (el) {
                             const isCmd = node.type === 'command_exec';
-                            el.textContent = isCmd ? '(Waiting for command output...)' : '(Waiting for Gemini response...)';
+                            const isLoop = node.type === 'loop';
+                            el.textContent = isCmd ? '(Waiting for command output...)' : (isLoop ? '(Waiting for loop execution...)' : '(Waiting for Gemini response...)');
                           }
                         }
                       }
@@ -246,9 +287,12 @@ function connectWebSocket() {
               
               // Render visual output previews
               node.updatePreview(data.outputs);
-
+ 
+              // Propagate outputs to downstream preview nodes
+              propagateOutputs(nodeId, data.outputs);
+ 
               // Generalized downstream loading cleanup on completion (recursive)
-              if (node.type === 'ai_prompt' || node.type === 'combine' || node.type === 'command_exec') {
+              if (node.type === 'ai_prompt' || node.type === 'combine' || node.type === 'command_exec' || node.type === 'loop') {
                 const visited = new Set();
                 const dfsCleanup = (currId) => {
                   const outConns = edges.connections.filter(c => c.fromNode === currId);
@@ -268,10 +312,10 @@ function connectWebSocket() {
             } 
             else if (status === 'error') {
               log(`Node [${node.metadata.title}] failed: ${data.error}`, 'error');
-              edges.setWireRunning(nodeId, false);
-
+              edges.setWireRunning(nodeId, false, true);
+ 
               // Generalized downstream loading cleanup on error (recursive)
-              if (node.type === 'ai_prompt' || node.type === 'combine' || node.type === 'command_exec') {
+              if (node.type === 'ai_prompt' || node.type === 'combine' || node.type === 'command_exec' || node.type === 'loop') {
                 const visited = new Set();
                 const dfsCleanup = (currId) => {
                   const outConns = edges.connections.filter(c => c.fromNode === currId);
@@ -537,8 +581,38 @@ async function refreshWorkflowList() {
       for (const w of data.workflows) {
         const item = document.createElement('div');
         item.className = 'dropdown-item';
-        item.textContent = w;
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'workflow-name';
+        nameSpan.textContent = w;
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn-delete-workflow';
+        deleteBtn.innerHTML = '&times;';
+        deleteBtn.title = 'Delete Workflow';
+        deleteBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (confirm(`Are you sure you want to delete the workflow "${w}"?`)) {
+            try {
+              const delRes = await fetch(`${BACKEND_URL}/api/workflows/${w}`, {
+                method: 'DELETE'
+              });
+              const delData = await delRes.json();
+              if (delData.success) {
+                log(`Workflow "${w}" deleted successfully.`, 'success');
+                await refreshWorkflowList();
+              } else {
+                alert(`Delete failed: ${delData.error}`);
+              }
+            } catch (err) {
+              alert(`Error deleting workflow: ${err.message}`);
+            }
+          }
+        });
+
         item.addEventListener('click', () => loadWorkflow(w));
+        item.appendChild(nameSpan);
+        item.appendChild(deleteBtn);
         loadDropdownMenu.appendChild(item);
       }
     } else {
@@ -587,10 +661,7 @@ async function loadWorkflow(name) {
       // Re-populate values
       if (sNode.fields) {
         for (const [fName, fVal] of Object.entries(sNode.fields)) {
-          nodeCard.fields[fName] = fVal;
-          // Sync text input element in DOM
-          const el = nodeCard.domElement.querySelector(`[data-field="${fName}"]`);
-          if (el) el.value = fVal;
+          nodeCard.setFieldValue(fName, fVal);
         }
       }
 
@@ -646,6 +717,9 @@ async function loadAppSettings() {
     const data = await res.json();
     if (data.success) {
       appSettings = data.settings;
+      window.appSettings = appSettings;
+      if (settingsImgWidth) settingsImgWidth.value = appSettings.defaultImageWidth || 512;
+      if (settingsImgHeight) settingsImgHeight.value = appSettings.defaultImageHeight || 512;
       console.log('Loaded Antigravity CLI Settings:', appSettings);
     }
   } catch (err) {
@@ -659,31 +733,87 @@ loadAppSettings();
 // Settings Button Interactions
 btnSettings.addEventListener('click', () => {
   settingsCliPath.value = appSettings.cliPath || '';
+  settingsCacheDir.value = appSettings.cacheDir || '';
+  if (settingsImgWidth) settingsImgWidth.value = appSettings.defaultImageWidth || 512;
+  if (settingsImgHeight) settingsImgHeight.value = appSettings.defaultImageHeight || 512;
   settingsModal.classList.add('show');
 });
 
-btnSettingsCancel.addEventListener('click', () => {
-  settingsModal.classList.remove('show');
+// Settings Tab Switching
+document.querySelectorAll('.settings-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.settings-tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    const target = document.getElementById(`tab-${tab.dataset.tab}`);
+    if (target) target.classList.add('active');
+  });
 });
 
-btnSettingsSave.addEventListener('click', async () => {
+// Click outside modal to close (overlay click)
+settingsModal.addEventListener('click', (e) => {
+  if (e.target === settingsModal) {
+    log(`Settings updated. CLI: ${appSettings.cliPath || '(Default)'}, Cache: ${appSettings.cacheDir || '(Workspace)'}, Image Size: ${appSettings.defaultImageWidth}x${appSettings.defaultImageHeight}`, 'success');
+    settingsModal.classList.remove('show');
+  }
+});
+
+// Auto-save Settings on input events
+async function saveAppSettingsAuto() {
   const cliPath = settingsCliPath.value.trim();
+  const cacheDir = settingsCacheDir.value.trim();
+  const defaultImageWidth = parseInt(settingsImgWidth.value) || 512;
+  const defaultImageHeight = parseInt(settingsImgHeight.value) || 512;
+
   try {
     const res = await fetch(`${BACKEND_URL}/api/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cliPath })
+      body: JSON.stringify({ cliPath, cacheDir, defaultImageWidth, defaultImageHeight })
     });
     const data = await res.json();
     if (data.success) {
       appSettings = data.settings;
-      log(`Settings saved. Antigravity CLI path set to: ${appSettings.cliPath}`, 'success');
-      settingsModal.classList.remove('show');
-    } else {
-      alert(`Failed to save settings: ${data.error}`);
+      window.appSettings = appSettings;
     }
   } catch (err) {
-    alert(`Server error: ${err.message}`);
+    console.error('Failed to auto-save settings:', err);
+  }
+}
+
+settingsCliPath.addEventListener('input', saveAppSettingsAuto);
+settingsCacheDir.addEventListener('input', saveAppSettingsAuto);
+settingsImgWidth.addEventListener('input', saveAppSettingsAuto);
+settingsImgHeight.addEventListener('input', saveAppSettingsAuto);
+
+// Close button interaction
+btnSettingsSave.addEventListener('click', () => {
+  log(`Settings updated. CLI: ${appSettings.cliPath || '(Default)'}, Cache: ${appSettings.cacheDir || '(Workspace)'}, Image Size: ${appSettings.defaultImageWidth}x${appSettings.defaultImageHeight}`, 'success');
+  settingsModal.classList.remove('show');
+});
+
+
+// Clear Cache Button Interaction
+btnSettingsClearCache.addEventListener('click', async () => {
+  btnSettingsClearCache.disabled = true;
+  btnSettingsClearCache.textContent = 'Clearing...';
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/settings/clear-cache`, {
+      method: 'POST'
+    });
+    const data = await res.json();
+    if (data.success) {
+      log(`Cache cleared successfully. Deleted ${data.clearedCount} temporary cache files.`, 'success');
+      alert(`Cache cleared successfully! Deleted ${data.clearedCount} temporary cache files.`);
+    } else {
+      alert(`Failed to clear cache: ${data.error}`);
+    }
+  } catch (err) {
+    alert(`Server error clearing cache: ${err.message}`);
+  } finally {
+    btnSettingsClearCache.disabled = false;
+    btnSettingsClearCache.textContent = 'Clear Cache';
   }
 });
 

@@ -1,3 +1,6 @@
 {
-  "cliPath": "C:\\Users\\X_Zer\\AppData\\Local\\agy\\bin\\agy.exe"
+  "cliPath": "",
+  "cacheDir": "./antwoworkflowcache",
+  "defaultImageWidth": 720,
+  "defaultImageHeight": 512
 }

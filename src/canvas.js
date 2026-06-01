@@ -30,6 +30,11 @@ export class GraphCanvas {
   initEvents() {
     // Zoom on wheel
     this.container.addEventListener('wheel', (e) => {
+      // If scroll is inside a node card, allow scrolling the card instead of zooming the canvas
+      if (e.target.closest('.node-card')) {
+        return;
+      }
+
       e.preventDefault();
       const zoomFactor = 0.08;
       const direction = e.deltaY < 0 ? 1 : -1;
@@ -112,11 +117,12 @@ export class GraphCanvas {
    * Apply transforms to the canvas grid container
    */
   updateTransform() {
-    // Translate and Scale the Grid layer
+    // Translate and Scale the Grid layer (nodes and wires)
     this.grid.style.transform = `translate(${this.offsetX}px, ${this.offsetY}px) scale(${this.scale})`;
     
-    // Adjust grid dot pattern spacing programmatically to preserve visual crispness
-    // under severe scaling if needed, but standard scaling is handled nicely by transform
+    // Update infinite background dots pattern position and size to match scale and offsets
+    this.container.style.backgroundPosition = `${this.offsetX}px ${this.offsetY}px`;
+    this.container.style.backgroundSize = `${24 * this.scale}px ${24 * this.scale}px`;
   }
 
   /**

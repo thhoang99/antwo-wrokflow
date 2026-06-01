@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite --port 5173",
     "server": "node --watch server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "clean": "npx antigravity-projects-fix consolidate --apply -y"
   },
   "dependencies": {
+    "antigravity-projects-fix": "^1.7.3",
     "express": "^4.19.2",
     "ws": "^8.17.0"
   },

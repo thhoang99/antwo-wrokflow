@@ -1,8 +1,11 @@
+// Touch to trigger watch reload
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
+import { exec, execSync } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
+import os from 'os';
 import { GraphEngine } from './src/engine.js';
 
 const app = express();
@@ -78,6 +81,22 @@ app.get('/api/file', (req, res) => {
   });
 });
 
+// API: Upload a file to the workspace
+app.post('/api/upload', async (req, res) => {
+  try {
+    const { filename, base64Data } = req.body;
+    if (!filename || !base64Data) {
+      return res.status(400).json({ success: false, error: 'Filename and base64Data are required' });
+    }
+    const buffer = Buffer.from(base64Data, 'base64');
+    const filePath = path.join(CWD, filename);
+    await fs.writeFile(filePath, buffer);
+    res.json({ success: true, filePath: filename });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // API: List saved workflows
 app.get('/api/workflows', async (req, res) => {
   try {
@@ -93,7 +112,10 @@ app.get('/api/workflows', async (req, res) => {
 
 const SETTINGS_FILE = path.join(CWD, 'settings.json');
 const DEFAULT_SETTINGS = {
-  cliPath: 'C:\\Users\\X_Zer\\AppData\\Local\\agy\\bin\\agy.exe'
+  cliPath: '',
+  cacheDir: './antwoworkflowcache',
+  defaultImageWidth: 512,
+  defaultImageHeight: 512
 };
 
 // API: Get settings
@@ -102,7 +124,11 @@ app.get('/api/settings', async (req, res) => {
     let settings = { ...DEFAULT_SETTINGS };
     try {
       const content = await fs.readFile(SETTINGS_FILE, 'utf-8');
-      settings = { ...settings, ...JSON.parse(content) };
+      const loaded = JSON.parse(content);
+      settings.cliPath = loaded.cliPath !== undefined ? loaded.cliPath : DEFAULT_SETTINGS.cliPath;
+      settings.cacheDir = loaded.cacheDir || DEFAULT_SETTINGS.cacheDir;
+      settings.defaultImageWidth = loaded.defaultImageWidth !== undefined ? parseInt(loaded.defaultImageWidth) : DEFAULT_SETTINGS.defaultImageWidth;
+      settings.defaultImageHeight = loaded.defaultImageHeight !== undefined ? parseInt(loaded.defaultImageHeight) : DEFAULT_SETTINGS.defaultImageHeight;
     } catch (e) {
       // create default settings.json
       await fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
@@ -116,13 +142,67 @@ app.get('/api/settings', async (req, res) => {
 // API: Save settings
 app.post('/api/settings', async (req, res) => {
   try {
-    const { cliPath } = req.body;
-    const settings = { cliPath: cliPath || DEFAULT_SETTINGS.cliPath };
+    const { cliPath, cacheDir, defaultImageWidth, defaultImageHeight } = req.body;
+    const settings = {
+      cliPath: cliPath || '',
+      cacheDir: cacheDir || DEFAULT_SETTINGS.cacheDir,
+      defaultImageWidth: defaultImageWidth !== undefined ? Math.min(2048, Math.max(1, parseInt(defaultImageWidth) || 512)) : DEFAULT_SETTINGS.defaultImageWidth,
+      defaultImageHeight: defaultImageHeight !== undefined ? Math.min(2048, Math.max(1, parseInt(defaultImageHeight) || 512)) : DEFAULT_SETTINGS.defaultImageHeight
+    };
     await fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
     res.json({ success: true, settings });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// API: Clear temporary cache files in configured folder
+app.post('/api/settings/clear-cache', async (req, res) => {
+  try {
+    let settings = { ...DEFAULT_SETTINGS };
+    try {
+      const content = await fs.readFile(SETTINGS_FILE, 'utf-8');
+      settings = { ...settings, ...JSON.parse(content) };
+    } catch (e) { }
+
+    const cacheDir = settings.cacheDir || CWD;
+    const resolvedPath = path.resolve(cacheDir);
+
+    // Safety guard to avoid deleting critical workspace files if cacheDir points to workspace root
+    if (resolvedPath === CWD || resolvedPath === path.resolve(CWD, 'src') || resolvedPath === path.resolve(CWD, 'workflows')) {
+      return res.status(400).json({ success: false, error: 'Safety block: Cannot delete all files in critical project directories.' });
+    }
+
+    try {
+      const stats = await fs.stat(resolvedPath);
+      if (!stats.isDirectory()) {
+        return res.status(400).json({ success: false, error: 'Configured path is not a directory' });
+      }
+    } catch (e) {
+      return res.status(404).json({ success: false, error: 'Configured directory does not exist' });
+    }
+
+    const files = await fs.readdir(resolvedPath);
+    let count = 0;
+    for (const file of files) {
+      try {
+        const filePath = path.join(resolvedPath, file);
+        await fs.rm(filePath, { recursive: true, force: true });
+        count++;
+      } catch (rmErr) {
+        // Ignore transient files that are locked by active CLI processes
+      }
+    }
+
+    res.json({ success: true, clearedCount: count });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Get Gemini quota (Disabled)
+app.get('/api/quota', (req, res) => {
+  res.json({ success: false, error: 'Quota checking is disabled.' });
 });
 
 // API: Load workflow
@@ -153,6 +233,19 @@ app.post('/api/workflows', async (req, res) => {
   }
 });
 
+// API: Delete workflow
+app.delete('/api/workflows/:name', async (req, res) => {
+  try {
+    const { name } = req.params;
+    const sanitizedName = name.replace(/[^a-zA-Z0-9-_]/g, '_');
+    const filePath = path.join(WORKFLOWS_DIR, `${sanitizedName}.json`);
+    await fs.unlink(filePath);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // WebSocket orchestration
 wss.on('connection', (ws) => {
   console.log('Client connected to antwo workflow execution channel');
@@ -161,7 +254,7 @@ wss.on('connection', (ws) => {
   ws.on('message', async (message) => {
     try {
       const payload = JSON.parse(message);
-      
+
       if (payload.type === 'run') {
         if (isRunning) {
           ws.send(JSON.stringify({ type: 'error', message: 'An execution is already in progress' }));
@@ -172,7 +265,7 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'system', message: 'Starting workflow execution engine...' }));
 
         const engine = new GraphEngine(CWD);
-        
+
         await engine.run(payload.graph, (nodeId, status, data) => {
           ws.send(JSON.stringify({
             type: 'node_status',
