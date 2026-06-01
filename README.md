@@ -4,8 +4,6 @@
 
 **Antwo Workflow** is an intuitive, visual node-based workflow editor and execution engine. It provides a modern canvas UI with smooth interactions, enabling you to build complex workflows by connecting functional blocks. You can easily process text, manage local files, execute shell commands, and run advanced artificial intelligence (AI) tasks powered by the Antigravity CLI.
 
-![Antwo Workflow Preview](images.webp)
-
 > [!WARNING]
 > **Vibe Coding Notice:** This project was developed utilizing "vibe coding" practices. Consequently, it is highly experimental, and there will likely be various bugs, quirky errors, or unhandled edge cases. Please run your workflows with a relaxed mind and positive vibes!
 
